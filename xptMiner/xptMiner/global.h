@@ -167,12 +167,13 @@ extern volatile uint32 totalChainCount[7];
 extern volatile uint32 monitorCurrentBlockHeight;
 extern volatile uint32 monitorCurrentBlockTime;
 
-#define PROTOCOL_XPT 0
-#define PROTOCOL_STRATUM 1
+#define PROTOCOL_BENCHMARK 1
+#define PROTOCOL_STRATUM 0
 
 extern int protocol;
 
 extern char *bin2hex(const unsigned char *p, size_t len);
+uint32_t getCompact(uint32_t);
 
 typedef struct  
 {
@@ -183,7 +184,7 @@ typedef struct
 	sint32 numThreads;
 	uint32 ptsMemoryMode;
 	// mode option
-	uint32 mode;
+	uint32 mode, benchmarkDifficulty;
 	float donationPercent;
         uint64 sieveMax;
         int protocol;

@@ -61,34 +61,36 @@ uint32 miningStartTime = 0;
  */
 void xptMiner_submitShare(minerRiecoinBlock_t* block, uint8* nOffset)
 {
-	uint32 passedSeconds = (uint32)time(NULL) - miningStartTime;
-	printf("[%02d:%02d:%02d] Share found! (Blockheight: %d)\n", (passedSeconds/3600)%60, (passedSeconds/60)%60, (passedSeconds)%60, block->height);
-	EnterCriticalSection(&cs_xptClient);
-	if( xptClient == NULL || xptClient_isDisconnected(xptClient))
-	{
-		printf("Share submission failed - No connection to server\n");
+	if( commandlineInput.protocol == PROTOCOL_STRATUM ) {
+		uint32 passedSeconds = (uint32)time(NULL) - miningStartTime;
+		printf("[%02d:%02d:%02d] Share found! (Blockheight: %d)\n", (passedSeconds/3600)%60, (passedSeconds/60)%60, (passedSeconds)%60, block->height);
+		EnterCriticalSection(&cs_xptClient);
+		if( xptClient == NULL || xptClient_isDisconnected(xptClient))
+		{
+			printf("Share submission failed - No connection to server\n");
+			LeaveCriticalSection(&cs_xptClient);
+			return;
+		}
+		// submit block
+		xptShareToSubmit_t* xptShare = (xptShareToSubmit_t*)malloc(sizeof(xptShareToSubmit_t));
+		memset(xptShare, 0x00, sizeof(xptShareToSubmit_t));
+		xptShare->algorithm = ALGORITHM_RIECOIN;
+		xptShare->version = block->version;
+		xptShare->nTime = block->nTime;
+		xptShare->nonce = 0;
+		xptShare->nBits = block->nBits;
+		memcpy(xptShare->prevBlockHash, block->prevBlockHash, 32);
+		memcpy(xptShare->merkleRoot, block->merkleRoot, 32);
+		memcpy(xptShare->merkleRootOriginal, block->merkleRootOriginal, 32);
+		sint32 userExtraNonceLength = sizeof(uint32);
+		uint8* userExtraNonceData = (uint8*)&block->uniqueMerkleSeed;
+		xptShare->userExtraNonceLength = userExtraNonceLength;
+		memcpy(xptShare->userExtraNonceData, userExtraNonceData, userExtraNonceLength);
+		memcpy(xptShare->riecoin_nOffset, nOffset, 32);
+		memcpy(xptShare->job_id, block->job_id, STRATUM_JOB_ID_MAX_LEN);
+		xptClient_foundShare(xptClient, xptShare);
 		LeaveCriticalSection(&cs_xptClient);
-		return;
 	}
-	// submit block
-	xptShareToSubmit_t* xptShare = (xptShareToSubmit_t*)malloc(sizeof(xptShareToSubmit_t));
-	memset(xptShare, 0x00, sizeof(xptShareToSubmit_t));
-	xptShare->algorithm = ALGORITHM_RIECOIN;
-	xptShare->version = block->version;
-	xptShare->nTime = block->nTime;
-	xptShare->nonce = 0;
-	xptShare->nBits = block->nBits;
-	memcpy(xptShare->prevBlockHash, block->prevBlockHash, 32);
-	memcpy(xptShare->merkleRoot, block->merkleRoot, 32);
-	memcpy(xptShare->merkleRootOriginal, block->merkleRootOriginal, 32);
-	sint32 userExtraNonceLength = sizeof(uint32);
-	uint8* userExtraNonceData = (uint8*)&block->uniqueMerkleSeed;
-	xptShare->userExtraNonceLength = userExtraNonceLength;
-	memcpy(xptShare->userExtraNonceData, userExtraNonceData, userExtraNonceLength);
-	memcpy(xptShare->riecoin_nOffset, nOffset, 32);
-	memcpy(xptShare->job_id, block->job_id, STRATUM_JOB_ID_MAX_LEN);
-	xptClient_foundShare(xptClient, xptShare);
-	LeaveCriticalSection(&cs_xptClient);
 }
 
 #ifdef _WIN32
@@ -118,7 +120,12 @@ void *xptMiner_minerThread(void *arg)
 			minerRiecoinBlock.shareTargetCompact = workDataSource.shareTargetCompact;
 
 			minerRiecoinBlock.height = workDataSource.height;
-			memcpy(minerRiecoinBlock.merkleRootOriginal, workDataSource.merkleRootOriginal, 32);
+			if ( commandlineInput.protocol == PROTOCOL_BENCHMARK ) {
+				for (uint8_t i(0) ; i < 32 ; i++)
+					minerRiecoinBlock.merkleRootOriginal[i] = (rand() % 256);
+			}
+			else
+				memcpy(minerRiecoinBlock.merkleRootOriginal, workDataSource.merkleRootOriginal, 32);
 			memcpy(minerRiecoinBlock.prevBlockHash, workDataSource.prevBlockHash, 32);
 			minerRiecoinBlock.uniqueMerkleSeed = ++uniqueMerkleSeedGenerator;
 			memcpy(minerRiecoinBlock.job_id, workDataSource.job_id, sizeof(minerRiecoinBlock.job_id) );
@@ -253,15 +260,21 @@ void xptMiner_xptQueryWorkLoop()
 				if( workDataSource.algorithm == ALGORITHM_RIECOIN )
 				{
 					float speedRate[7];  // for chain length[i]
-					// speed is represented as knumber/s (in steps of 0x1000)
-
 					if( passedSeconds > 5 )
 					{
-						for (int i = 2; i <=4; i++) {
-							speedRate[i] = (double)totalChainCount[i] * 4096.0 / (double) passedSeconds / 1000.0;
+						for (int i = 1 ; i <= 6 ; i++) {
+							speedRate[i] = ((double) totalChainCount[i])/((double) passedSeconds);
 						}
+						printf("[%02d:%02d:%02d] (1-4t/s) = (%.1lf %.2lf %.3lf %.4lf)", (passedSeconds/3600)%60, (passedSeconds/60)%60, (passedSeconds)%60, speedRate[1], speedRate[2], speedRate[3], speedRate[4], totalShareCount, totalShareCount-totalRejectedShareCount);
+						if (commandlineInput.protocol == PROTOCOL_BENCHMARK) {
+							const double r12(((double) totalChainCount[1])/((double) totalChainCount[2])),
+										 s1(((double) totalChainCount[1])/passedSeconds),
+							             t(r12*r12*r12*r12*r12/(86400.*s1));
+							printf(" | r %.1lf, %.2lf dpb, %.2lf bpd", r12, t, 1./t);
+						}
+						else printf(", sh/min = %.1lf", 60*speedRate[4]);
+						printf("\n");
 					}
-					printf("[%02d:%02d:%02d] 2ch/s: %.4lf 3ch/s: %.4lf 4ch/s: %.4lf Shares total: %d / %d\n", (passedSeconds/3600)%60, (passedSeconds/60)%60, (passedSeconds)%60, speedRate[2], speedRate[3], speedRate[4], totalShareCount, totalShareCount-totalRejectedShareCount);
 					fflush(stdout);
 				}
 
@@ -347,7 +360,7 @@ void xptMiner_xptQueryWorkLoop()
 				}
 				else
 				{
-					printf("Connected to server using x.pushthrough(xpt) protocol\n");
+					printf("Ready for Benchmarking\n");
 				}
 				for (int i = 0; i < 7; i++) totalChainCount[i] = 0;
 			}
@@ -372,7 +385,7 @@ void xptMiner_printHelp()
 	puts("   -t <num>                      The number of threads for mining (default is set to number of cores)");
 	puts("                                 For most efficient mining, set to number of virtual cores if you have memory");
 	puts("   -s <num>                      Prime sieve max (default: 900000000)");
-	puts("   -m                            Use stratum protocol instead of xpt");
+	puts("   -b (<num>)                    Do benchmark instead of pooled mining");
 	puts("Example usage:");
 #ifdef _WIN32
 	puts("   xptMiner.exe -o http://poolurl.com:10034 -u workername.ric_1 -p workerpass -t 4");
@@ -385,8 +398,8 @@ void xptMiner_parseCommandline(int argc, char **argv)
 {
 	sint32 cIdx = 1;
 	commandlineInput.donationPercent = 2.0f;
-	commandlineInput.sieveMax = 900000000ULL;
-	commandlineInput.protocol = PROTOCOL_XPT;
+	commandlineInput.sieveMax = 2147483647ULL;
+	commandlineInput.protocol = PROTOCOL_STRATUM;
 
 	while( cIdx < argc )
 	{
@@ -462,9 +475,22 @@ void xptMiner_parseCommandline(int argc, char **argv)
 			}
 			cIdx++;
 		}
-		else if( memcmp(argument, "-m", 3)==0 )
+		else if( memcmp(argument, "-b", 3)==0 )
 		{
-			commandlineInput.protocol = PROTOCOL_STRATUM;
+			// -t
+			if( cIdx >= argc )
+			{
+				printf("Missing difficulty after -b option\n");
+				exit(0);
+			}
+			commandlineInput.protocol = PROTOCOL_BENCHMARK;
+			commandlineInput.benchmarkDifficulty = atoi(argv[cIdx]);
+			if( commandlineInput.benchmarkDifficulty < 265 || commandlineInput.benchmarkDifficulty > 32767 )
+			{
+				printf("-b parameter out of range");
+				exit(0);
+			}
+			cIdx++;
 		}
 		else if( memcmp(argument, "-d", 3)==0 )
 		{
@@ -503,7 +529,7 @@ void xptMiner_parseCommandline(int argc, char **argv)
 int main(int argc, char** argv)
 {
 
-	commandlineInput.host = "ypool.net";
+	commandlineInput.host = "127.0.0.1";
 	srand(getTimeMilliseconds());
 	commandlineInput.port = 8080 + (rand()%8); // use random port between 8080 and 8087
   uint32_t numcpu = 1; // in case we fall through;	
@@ -547,9 +573,9 @@ sysctl(mib, 2, &numcpu, &len, NULL, 0);
 	printf("  xptMiner/ric/dga (%s)\n", minerVersionString);
 	printf("  author: jh00 (xptminer originally for http://ypool.net) dga (ric core)\n");
 	printf("----------------------------\n");
-	if( commandlineInput.protocol == PROTOCOL_XPT )
+	if( commandlineInput.protocol == PROTOCOL_BENCHMARK )
 	{
-		printf("Launching miner...  using XPT\n");
+		printf("Launching miner for Benchmarking\n");
 	}
 	else if( commandlineInput.protocol == PROTOCOL_STRATUM )
 	{

@@ -346,7 +346,6 @@ void process_sieve(uint8_t *sieve, uint32_t start_i, uint32_t end_i) {
   }
 }
 
-
 void verify_thread() {
   /* Check for a prime cluster.  A "share" on ypool is any
    * four or more of the elements prime, but for speed,
@@ -410,6 +409,7 @@ void verify_thread() {
 	 */
 	
 	/* Note start at 1 - we've already tested bias 0 */
+	totalChainCount[1]++;
 	for (int i = 1; i < 6; i++) {
 	  mpz_add_ui(z_temp, z_temp, primeTupleOffset[i]);
 	  mpz_sub_ui(z_ft_n, z_temp, 1);
@@ -418,10 +418,13 @@ void verify_thread() {
 	    nPrimes++;
 	    totalChainCount[nPrimes]++;
 	  }
-	  int candidatesRemaining = 5-i;
-	  if ((nPrimes + candidatesRemaining) < 4) { continue; }
+	  else if ( commandlineInput.protocol != PROTOCOL_BENCHMARK ) {
+			int candidatesRemaining(5 - i);
+			if ((nPrimes + candidatesRemaining) < 4) { continue; }
+	  }
+	  else break;
 	}
-	
+
 	/* The statistics are a little confusing because of the interaction
 	 * with early-exit above.  They overcount relative to finding consecutive
 	 * primes, but undercount relative to counting all primes.  But they're
@@ -477,11 +480,9 @@ void verify_thread() {
   }
 }
 
-
 void riecoin_process(minerRiecoinBlock_t* block)
 {
 	uint32 searchBits = block->targetCompact;
-
 	if (!there_is_a_master) {
 	  EnterCriticalSection(&master_lock);
 	  if (!there_is_a_master) {

@@ -35,37 +35,40 @@ void stratumClient_sendSubscribe(xptClient_t* sctx);
 #ifdef _WIN32
 SOCKET xptClient_openConnection(char *IP, int Port)
 {
-	SOCKET s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
-	if( s == SOCKET_ERROR )
-		return SOCKET_ERROR;
-	SOCKADDR_IN addr;
-	memset(&addr,0,sizeof(SOCKADDR_IN));
-	addr.sin_family=AF_INET;
-	addr.sin_port=htons(Port);
-	addr.sin_addr.s_addr=inet_addr(IP);
-	int result = connect(s,(SOCKADDR*)&addr,sizeof(SOCKADDR_IN));
-	if( result )
-	{
-		closesocket(s);
-		return SOCKET_ERROR;
-	}
+	if( commandlineInput.protocol == PROTOCOL_STRATUM ) {
+		SOCKET s=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+		if( s == SOCKET_ERROR )
+			return SOCKET_ERROR;
+		SOCKADDR_IN addr;
+		memset(&addr,0,sizeof(SOCKADDR_IN));
+		addr.sin_family=AF_INET;
+		addr.sin_port=htons(Port);
+		addr.sin_addr.s_addr=inet_addr(IP);
+		int result = connect(s,(SOCKADDR*)&addr,sizeof(SOCKADDR_IN));
+		if( result )
+		{
+			closesocket(s);
+			return SOCKET_ERROR;
+		}
 #else
 int xptClient_openConnection(char *IP, int Port)
 {
-  int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  struct sockaddr_in addr;
-  memset(&addr, 0, sizeof(sockaddr_in));
-  addr.sin_family = AF_INET;
-  addr.sin_port=htons(Port);
-  addr.sin_addr.s_addr = inet_addr(IP);
-  int result = connect(s, (sockaddr*)&addr, sizeof(sockaddr_in));
-  if (result) {
-    perror("unablhe to connect");
-    return -1;
-  }
+	if( commandlineInput.protocol == PROTOCOL_STRATUM ) {
+		int s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		struct sockaddr_in addr;
+		memset(&addr, 0, sizeof(sockaddr_in));
+		addr.sin_family = AF_INET;
+		addr.sin_port=htons(Port);
+		addr.sin_addr.s_addr = inet_addr(IP);
+		int result = connect(s, (sockaddr*)&addr, sizeof(sockaddr_in));
+		if (result) {
+			perror("unablhe to connect");
+			return -1;
+		}
 #endif
-
-	return s;
+		return s;
+	}
+	else return 1;
 }
 
 
@@ -189,6 +192,15 @@ xptClient_t* xptClient_create()
  */
 bool xptClient_connect(xptClient_t* xptClient, generalRequestTarget_t* target)
 {
+	if( commandlineInput.protocol == PROTOCOL_BENCHMARK ) {
+		xptClient->disconnected = false;
+		memset(&xptClient->blockWorkInfo, 0x00, sizeof(xptBlockWorkInfo_t));
+		xptClient->clientState = XPT_CLIENT_STATE_LOGGED_IN;
+		xptClient->algorithm = ALGORITHM_RIECOIN;
+		xptClient->blockWorkInfo.height = 1;
+		xptClient->blockWorkInfo.targetCompact = commandlineInput.benchmarkDifficulty;
+		return true;
+	}
 	// are we already connected?
 	if( xptClient->disconnected == false )
 		return false;
@@ -222,11 +234,7 @@ bool xptClient_connect(xptClient_t* xptClient, generalRequestTarget_t* target)
 	// reset old work info
 	memset(&xptClient->blockWorkInfo, 0x00, sizeof(xptBlockWorkInfo_t));
 	// send worker login
-	if( commandlineInput.protocol == PROTOCOL_XPT )
-	{
-		xptClient_sendWorkerLogin(xptClient);
-	}
-	else if( commandlineInput.protocol == PROTOCOL_STRATUM )
+	if( commandlineInput.protocol == PROTOCOL_STRATUM )
 	{
 		stratumClient_sendSubscribe(xptClient);
 	}
@@ -1063,7 +1071,7 @@ bool xptClient_process(xptClient_t* xptClient)
 			return false;
 		}
 #else
-    if(errno != EAGAIN || r == 0)
+    if((errno != EAGAIN || r == 0) && commandlineInput.protocol != PROTOCOL_BENCHMARK)
     {
 		xptClient->disconnected = true;
 		return false;
